@@ -247,17 +247,113 @@ struct ListRequest {
     item_type: Option<String>,
     board: Option<String>,
     assignee: Option<String>,
+    /// CH-4307: post-filter by resolution (terminal states only — completed,
+    /// superseded, wont_do, duplicate, obsolete, merged).
+    #[serde(default)]
+    resolution: Option<String>,
+    /// CH-4307: post-filter by priority (critical, high, medium, low).
+    #[serde(default)]
+    priority: Option<String>,
+    /// CH-4307: post-filter by tag (exact match, multiple = AND). The client
+    /// sends `Vec<String>` under the `tags` key; default to empty so older
+    /// clients without the field continue to work.
+    #[serde(default)]
+    tags: Vec<String>,
+    /// CH-4307: post-filter to items with all dependencies met (unblocked).
+    #[serde(default)]
+    ready: bool,
 }
 
 pub(crate) fn handle_list(payload: &[u8], store: &KanbanStore) -> Result<Vec<u8>, Vec<u8>> {
     let req: ListRequest = parse_payload(payload)?;
 
-    let items = store.query_items(
+    let mut items = store.query_items(
         req.status.as_deref(),
         req.item_type.as_deref(),
         req.board.as_deref(),
         req.assignee.as_deref(),
     );
+
+    // CH-4307: apply the post-filters that previously only existed in the
+    // local-mode handler (`Commands::List` in nusy-kanban/src/main.rs).
+    // Server-mode requests were silently dropping these fields because they
+    // were not on `ListRequest` at all, so `nk list --tag X` returned the full
+    // board regardless of tag.
+    if let Some(ref res_filter) = req.resolution {
+        items.retain(|batch| {
+            let res_col = batch
+                .column(nusy_kanban::schema::items_col::RESOLUTION)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("resolution column");
+            !arrow::array::Array::is_null(res_col, 0) && res_col.value(0) == res_filter.as_str()
+        });
+    }
+
+    if let Some(ref pri_filter) = req.priority {
+        items.retain(|batch| {
+            let pri_col = batch
+                .column(nusy_kanban::schema::items_col::PRIORITY)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("priority column");
+            !arrow::array::Array::is_null(pri_col, 0) && pri_col.value(0) == pri_filter.as_str()
+        });
+    }
+
+    if !req.tags.is_empty() {
+        let needles: Vec<&str> = req.tags.iter().map(String::as_str).collect();
+        items.retain(|batch| {
+            let tags_col = batch
+                .column(nusy_kanban::schema::items_col::TAGS)
+                .as_any()
+                .downcast_ref::<arrow::array::ListArray>()
+                .expect("tags column");
+            // query_items returns one-row-per-batch slices, but be defensive
+            // against future batching by checking every row.
+            (0..batch.num_rows()).any(|i| {
+                if arrow::array::Array::is_null(tags_col, i) {
+                    return false;
+                }
+                let item_tags = tags_col.value(i);
+                let tag_arr = item_tags
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("tag values");
+                let len = arrow::array::Array::len(tag_arr);
+                let item_tag_set: std::collections::HashSet<&str> =
+                    (0..len).map(|j| tag_arr.value(j)).collect();
+                needles.iter().all(|t| item_tag_set.contains(*t))
+            })
+        });
+    }
+
+    if req.ready {
+        // Recompute against the unfiltered store so dependency resolution sees
+        // the full graph, then narrow to items whose ID is in the ready set.
+        let all_batches = store.query_items(None, None, None, None);
+        let extracted = critical_path::extract_items(&all_batches);
+        match critical_path::compute_critical_path(&extracted) {
+            Ok(cp) => {
+                let ready_set: std::collections::HashSet<&str> =
+                    cp.ready.iter().map(String::as_str).collect();
+                items.retain(|batch| {
+                    let ids = batch
+                        .column(nusy_kanban::schema::items_col::ID)
+                        .as_any()
+                        .downcast_ref::<arrow::array::StringArray>()
+                        .expect("id");
+                    (0..batch.num_rows()).any(|i| ready_set.contains(ids.value(i)))
+                });
+            }
+            Err(e) => {
+                return Err(error_response(
+                    &format!("ready filter failed: {e}"),
+                    "READY_FILTER_FAILED",
+                ));
+            }
+        }
+    }
 
     let table = display::format_item_table(&items);
     serialize_response(&serde_json::json!({

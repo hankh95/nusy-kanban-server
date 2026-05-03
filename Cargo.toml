@@ -1,7 +1,7 @@
 [package]
 name = "nusy-kanban-server"
 description = "NATS server + client bridge for the Arrow-native kanban engine"
-version = "0.15.1"
+version = "0.15.4"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/hankh95/nusy-kanban-server"
@@ -18,7 +18,7 @@ research = []
 git = []
 
 [dependencies]
-nusy-kanban = "0.15.1"
+nusy-kanban = "0.15.2"
 nusy-graph-review = { version = "0.14.2", optional = true }
 noesis-ship = "0.14.2"
 arrow = { version = "57", features = ["prettyprint"] }
