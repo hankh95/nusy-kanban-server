@@ -1,34 +1,52 @@
-[package]
-name = "nusy-kanban-server"
-description = "NATS server + client bridge for the Arrow-native kanban engine"
+[workspace]
+members = [
+    "crates/noesis-ship",
+    "crates/nusy-arrow-core",
+    "crates/nusy-arrow-git",
+    "crates/nusy-codegraph",
+    "crates/nusy-conductor",
+    "crates/nusy-cranelift",
+    "crates/nusy-evaluator",
+    "crates/nusy-graph-query",
+    "crates/nusy-graph-review",
+    "crates/nusy-kanban",
+    "crates/nusy-kanban-server",
+    "crates/nusy-llm-backend",
+    "crates/nusy-safety",
+    "crates/nusy-tutor-record",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.15.4"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/hankh95/nusy-kanban-server"
-homepage = "https://nusy.dev"
+# CH-4702: the monorepo is private, so a github.com/hankh95/nusy-product-team
+# link 404s for crates.io users. Point at nusy.dev until the V19 public repos
+# (nusy-reasoners + v0.2 store extraction) exist, then repoint per crate.
+repository = "https://nusy.dev"
 
-[[bin]]
-name = "nusy-kanban-server"
-path = "src/main.rs"
-
-[features]
-default = []
-pr = ["dep:nusy-graph-review"]
-research = []
-git = []
-
-[dependencies]
-nusy-kanban = "0.15.2"
-nusy-graph-review = { version = "0.14.2", optional = true }
-noesis-ship = "0.14.2"
+[workspace.dependencies]
 arrow = { version = "57", features = ["prettyprint"] }
+parquet = { version = "57", features = ["arrow"] }
+datafusion = "52"
+rdf-fusion = { git = "https://codeberg.org/tschwarzinger/rdf-fusion.git", branch = "main" }
+uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
 thiserror = "2"
-
-[dev-dependencies]
 tempfile = "3"
+tree-sitter = "0.25"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+async-nats = "0.38"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+futures = "0.3"
+tracing = "0.1"
+tantivy = "0.22"
